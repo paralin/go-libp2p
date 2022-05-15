@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net"
+	"sync"
 	"testing"
 	"time"
 
@@ -131,30 +132,44 @@ func TestObsAddrSet(t *testing.T) {
 
 type wrappedNetwork struct {
 	network.Network
+
+	mx    sync.Mutex
 	conns map[peer.ID][]network.Conn
 }
 
 func (n *wrappedNetwork) ConnsToPeer(p peer.ID) []network.Conn {
+	n.mx.Lock()
+	defer n.mx.Unlock()
 	return n.conns[p]
 }
 
+func (n *wrappedNetwork) AddConnection(p peer.ID, c network.Conn) {
+	n.mx.Lock()
+	defer n.mx.Unlock()
+	if n.conns == nil {
+		n.conns = make(map[peer.ID][]network.Conn)
+	}
+	n.conns[p] = append(n.conns[p], c)
+}
+
 type wrappedHost struct {
-	conns map[peer.ID][]network.Conn
 	host.Host
+	network *wrappedNetwork
+}
+
+func newWrappedHost(h host.Host) *wrappedHost {
+	return &wrappedHost{
+		Host:    h,
+		network: &wrappedNetwork{Network: h.Network()},
+	}
 }
 
 func (h *wrappedHost) AddConn(p peer.ID, c network.Conn) {
-	if h.conns == nil {
-		h.conns = make(map[peer.ID][]network.Conn)
-	}
-	h.conns[p] = append(h.conns[p], c)
+	h.network.AddConnection(p, c)
 }
 
 func (h *wrappedHost) Network() network.Network {
-	return &wrappedNetwork{
-		Network: h.Host.Network(),
-		conns:   h.conns,
-	}
+	return h.network
 }
 
 func TestObsAddrSetExpiration(t *testing.T) {
@@ -162,7 +177,7 @@ func TestObsAddrSetExpiration(t *testing.T) {
 	h, err := libp2p.New(libp2p.ListenAddrs(local))
 	require.NoError(t, err)
 	defer h.Close()
-	host := &wrappedHost{Host: h}
+	host := newWrappedHost(h)
 	oam, err := identify.NewObservedAddrManager(host)
 	require.NoError(t, err)
 	defer oam.Close()
