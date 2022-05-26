@@ -5,6 +5,7 @@ package libp2p
 import (
 	"crypto/rand"
 
+	rcmgr "github.com/libp2p/go-libp2p/p2p/host/resource-manager"
 	"github.com/libp2p/go-libp2p/p2p/muxer/yamux"
 	"github.com/libp2p/go-libp2p/p2p/net/connmgr"
 	"github.com/libp2p/go-libp2p/p2p/security/noise"
@@ -16,7 +17,6 @@ import (
 	"github.com/libp2p/go-libp2p-core/crypto"
 
 	"github.com/libp2p/go-libp2p-peerstore/pstoremem"
-	rcmgr "github.com/libp2p/go-libp2p-resource-manager"
 	"github.com/multiformats/go-multiaddr"
 )
 
