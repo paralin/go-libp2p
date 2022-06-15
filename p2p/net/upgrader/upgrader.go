@@ -7,6 +7,7 @@ import (
 	"net"
 	"time"
 
+	"github.com/libp2p/go-libp2p-core/canonicallog"
 	"github.com/libp2p/go-libp2p/p2p/net/pnet"
 
 	"github.com/libp2p/go-libp2p-core/connmgr"
@@ -147,6 +148,7 @@ func (u *upgrader) upgrade(ctx context.Context, t transport.Transport, maconn ma
 	sconn, server, err := u.setupSecurity(ctx, conn, p, dir)
 	if err != nil {
 		conn.Close()
+		canonicallog.LogMisbehavingPeerNetAddr(p, conn.RemoteAddr(), err, "failed to negotiate security protocol")
 		return nil, fmt.Errorf("failed to negotiate security protocol: %s", err)
 	}
 
@@ -174,6 +176,7 @@ func (u *upgrader) upgrade(ctx context.Context, t transport.Transport, maconn ma
 	smconn, err := u.setupMuxer(ctx, sconn, server, connScope.PeerScope())
 	if err != nil {
 		sconn.Close()
+		canonicallog.LogMisbehavingPeerNetAddr(p, conn.RemoteAddr(), err, "failed to setup muxer")
 		return nil, fmt.Errorf("failed to negotiate stream multiplexer: %s", err)
 	}
 
