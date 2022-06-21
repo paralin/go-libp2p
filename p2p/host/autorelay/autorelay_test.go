@@ -23,7 +23,11 @@ import (
 const protoIDv2 = circuitv2_proto.ProtoIDv2Hop
 
 func numRelays(h host.Host) int {
-	peers := make(map[peer.ID]struct{})
+	return len(usedRelays(h))
+}
+
+func usedRelays(h host.Host) []peer.ID {
+	m := make(map[peer.ID]struct{})
 	for _, addr := range h.Addrs() {
 		addr, comp := ma.SplitLast(addr)
 		if comp.Protocol().Code != ma.P_CIRCUIT { // not a relay addr
@@ -37,9 +41,13 @@ func numRelays(h host.Host) int {
 		if err != nil {
 			panic(err)
 		}
-		peers[id] = struct{}{}
+		m[id] = struct{}{}
 	}
-	return len(peers)
+	peers := make([]peer.ID, 0, len(m))
+	for id := range m {
+		peers = append(peers, id)
+	}
+	return peers
 }
 
 func newPrivateNode(t *testing.T, opts ...autorelay.Option) host.Host {
@@ -207,52 +215,6 @@ func TestWaitForCandidates(t *testing.T) {
 	require.Eventually(t, func() bool { return numRelays(h) > 0 }, 3*time.Second, 100*time.Millisecond)
 }
 
-func TestMaxCandidateAge(t *testing.T) {
-	const numCandidates = 3
-
-	// Precompute the candidates.
-	// Generating public-private key pairs might be too expensive to do it sync on CI.
-	candidates := make([]peer.AddrInfo, 0, 2*numCandidates)
-	for i := 0; i < 2*numCandidates; i++ {
-		r := newRelay(t)
-		t.Cleanup(func() { r.Close() })
-		candidates = append(candidates, peer.AddrInfo{ID: r.ID(), Addrs: r.Addrs()})
-	}
-
-	var counter int32 // to be used atomically
-	cl := clock.NewMock()
-	h := newPrivateNode(t,
-		autorelay.WithPeerSource(func(num int) <-chan peer.AddrInfo {
-			c := atomic.AddInt32(&counter, 1)
-			require.LessOrEqual(t, int(c), 2, "expected the callback to only be called twice")
-			require.Equal(t, numCandidates, num)
-			peerChan := make(chan peer.AddrInfo, num)
-			defer close(peerChan)
-			for i := 0; i < num; i++ {
-				peerChan <- candidates[0]
-				candidates = candidates[1:]
-			}
-			return peerChan
-		}, time.Hour),
-		autorelay.WithMaxCandidates(numCandidates),
-		autorelay.WithNumRelays(1),
-		autorelay.WithMaxCandidateAge(time.Hour),
-		autorelay.WithBootDelay(0),
-		autorelay.WithClock(cl),
-	)
-	defer h.Close()
-
-	r1 := newRelay(t)
-	t.Cleanup(func() { r1.Close() })
-
-	require.Eventually(t, func() bool { return numRelays(h) == 1 }, 5*time.Second, 50*time.Millisecond)
-	require.Equal(t, 1, int(atomic.LoadInt32(&counter)))
-	cl.Add(40 * time.Minute)
-	require.Never(t, func() bool { return numRelays(h) > 1 }, 100*time.Millisecond, 25*time.Millisecond)
-	cl.Add(30 * time.Minute)
-	require.Eventually(t, func() bool { return atomic.LoadInt32(&counter) == 2 }, time.Second, 25*time.Millisecond)
-}
-
 func TestBackoff(t *testing.T) {
 	const backoff = 20 * time.Second
 	cl := clock.NewMock()
@@ -357,4 +319,62 @@ func TestRelayV1(t *testing.T) {
 
 		require.Eventually(t, func() bool { return numRelays(h) > 0 }, 3*time.Second, 100*time.Millisecond)
 	})
+}
+
+func TestMaxAge(t *testing.T) {
+	r1 := newRelay(t) // is closed explicitly below
+	r2 := newRelay(t)
+	defer r2.Close()
+	cl := clock.NewMock()
+
+	connected := make(chan struct{})
+	var counter int
+	h := newPrivateNode(t,
+		autorelay.WithPeerSource(func(int) <-chan peer.AddrInfo {
+			peerChan := make(chan peer.AddrInfo, 1)
+			counter++
+			switch counter {
+			case 1:
+				go func() {
+					defer close(peerChan)
+					peerChan <- peer.AddrInfo{ID: r1.ID(), Addrs: r1.Addrs()}
+					<-connected
+					// These relays are never getting used, as we'll connect to r1 immediately.
+					for i := 0; i < 3; i++ {
+						r := newRelay(t)
+						t.Cleanup(func() { r.Close() })
+						peerChan <- peer.AddrInfo{ID: r.ID(), Addrs: r.Addrs()}
+					}
+				}()
+			case 2:
+				peerChan <- peer.AddrInfo{ID: r2.ID(), Addrs: r2.Addrs()}
+				close(peerChan)
+			default:
+				t.Fatal("unexpected call to PeerSource")
+			}
+			return peerChan
+		}, time.Second),
+		autorelay.WithNumRelays(1),
+		autorelay.WithMaxCandidates(3),
+		autorelay.WithBootDelay(0),
+		autorelay.WithMaxCandidateAge(20*time.Minute),
+		autorelay.WithClock(cl),
+	)
+	defer h.Close()
+
+	require.Eventually(t, func() bool { return numRelays(h) > 0 }, 3*time.Second, 100*time.Millisecond)
+	relays := usedRelays(h)
+	require.Len(t, relays, 1)
+	require.Equal(t, r1.ID(), relays[0])
+	close(connected)
+	time.Sleep(time.Second)
+
+	cl.Add(21 * time.Minute)
+	// by now the 3 relays should have been garbage collected
+	r1.Close()
+
+	require.Eventually(t, func() bool { return numRelays(h) > 0 }, 3*time.Second, 100*time.Millisecond)
+	relays = usedRelays(h)
+	require.Len(t, relays, 1)
+	require.Equal(t, r2.ID(), relays[0])
 }
