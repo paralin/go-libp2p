@@ -7,6 +7,7 @@ import (
 	"runtime"
 
 	"github.com/libp2p/go-libp2p-core/network"
+	madns "github.com/multiformats/go-multiaddr-dns"
 
 	"github.com/libp2p/go-libp2p-core/pnet"
 
@@ -82,7 +83,7 @@ func callConstructor(c reflect.Value, args []reflect.Value) (interface{}, error)
 	return val, err
 }
 
-type constructor func(host.Host, transport.Upgrader, pnet.PSK, connmgr.ConnectionGater, network.ResourceManager) interface{}
+type constructor func(host.Host, transport.Upgrader, pnet.PSK, connmgr.ConnectionGater, network.ResourceManager, *madns.Resolver) interface{}
 
 func makeArgumentConstructors(fnType reflect.Type, argTypes map[reflect.Type]constructor) ([]constructor, error) {
 	params := fnType.NumIn()
@@ -133,7 +134,7 @@ func makeConstructor(
 	tptType reflect.Type,
 	argTypes map[reflect.Type]constructor,
 	opts ...interface{},
-) (func(host.Host, transport.Upgrader, pnet.PSK, connmgr.ConnectionGater, network.ResourceManager) (interface{}, error), error) {
+) (func(host.Host, transport.Upgrader, pnet.PSK, connmgr.ConnectionGater, network.ResourceManager, *madns.Resolver) (interface{}, error), error) {
 	v := reflect.ValueOf(tpt)
 	// avoid panicing on nil/zero value.
 	if v == (reflect.Value{}) {
@@ -157,10 +158,10 @@ func makeConstructor(
 		return nil, err
 	}
 
-	return func(h host.Host, u transport.Upgrader, psk pnet.PSK, cg connmgr.ConnectionGater, rcmgr network.ResourceManager) (interface{}, error) {
+	return func(h host.Host, u transport.Upgrader, psk pnet.PSK, cg connmgr.ConnectionGater, rcmgr network.ResourceManager, resolver *madns.Resolver) (interface{}, error) {
 		arguments := make([]reflect.Value, 0, len(argConstructors)+len(opts))
 		for i, makeArg := range argConstructors {
-			if arg := makeArg(h, u, psk, cg, rcmgr); arg != nil {
+			if arg := makeArg(h, u, psk, cg, rcmgr, resolver); arg != nil {
 				arguments = append(arguments, reflect.ValueOf(arg))
 			} else {
 				// ValueOf an un-typed nil yields a zero reflect

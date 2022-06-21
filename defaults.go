@@ -18,6 +18,7 @@ import (
 	"github.com/libp2p/go-libp2p-peerstore/pstoremem"
 	rcmgr "github.com/libp2p/go-libp2p-resource-manager"
 	"github.com/multiformats/go-multiaddr"
+	madns "github.com/multiformats/go-multiaddr-dns"
 )
 
 // DefaultSecurity is the default security option.
@@ -108,6 +109,11 @@ var DefaultConnectionManager = func(cfg *Config) error {
 	return cfg.Apply(ConnectionManager(mgr))
 }
 
+// DefaultMultiaddrResolver creates a default connection manager
+var DefaultMultiaddrResolver = func(cfg *Config) error {
+	return cfg.Apply(MultiaddrResolver(madns.DefaultResolver))
+}
+
 // Complete list of default options and when to fallback on them.
 //
 // Please *DON'T* specify default options any other way. Putting this all here
@@ -151,6 +157,10 @@ var defaults = []struct {
 	{
 		fallback: func(cfg *Config) bool { return cfg.ConnManager == nil },
 		opt:      DefaultConnectionManager,
+	},
+	{
+		fallback: func(cfg *Config) bool { return cfg.MultiaddrResolver == nil },
+		opt:      DefaultMultiaddrResolver,
 	},
 }
 
